@@ -178,11 +178,18 @@ async function renderProjectDetailPage(slug: string) {
           </div>
 
           <div className="sticky top-10 hidden h-full max-w-screen self-start lg:block lg:flex-[2]">
-            <PostToc contentSelector={contentSelector} />
+            <PostToc
+              tocItems={project.tocItems}
+              contentSelector={contentSelector}
+            />
           </div>
 
           <div className="lg:hidden">
-            <PostToc isMobile={true} contentSelector={contentSelector} />
+            <PostToc
+              tocItems={project.tocItems}
+              isMobile={true}
+              contentSelector={contentSelector}
+            />
           </div>
         </div>
       </div>

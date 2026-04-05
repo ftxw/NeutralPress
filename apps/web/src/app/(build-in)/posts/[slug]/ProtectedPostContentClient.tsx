@@ -22,6 +22,7 @@ import { useNavigateWithTransition } from "@/components/ui/Link";
 import { useConfig } from "@/context/ConfigContext";
 import { useBroadcast, useBroadcastSender } from "@/hooks/use-broadcast";
 import { resolveApiResponse } from "@/lib/client/run-with-auth";
+import { prepareRichTextSource } from "@/lib/shared/rich-text-source";
 import type { MDXContentMessage } from "@/types/broadcast-messages";
 import type { ConfigType } from "@/types/config";
 import { AutoResizer } from "@/ui/AutoResizer";
@@ -64,7 +65,11 @@ const ROLE_LABELS: Record<
 
 type ProtectedPostBroadcastMessage =
   | MDXContentMessage
-  | { type: "captcha-reset" };
+  | {
+      type: "captcha-reset" | "captcha-error" | "captcha-solved";
+      captchaKey?: string;
+      token?: string;
+    };
 
 export default function ProtectedPostContentClient({
   slug,
@@ -83,7 +88,7 @@ export default function ProtectedPostContentClient({
   const [captchaToken, setCaptchaToken] = useState("");
   const [requiresLogin, setRequiresLogin] = useState(false);
   const [isLoadingContent, setIsLoadingContent] = useState(
-    accessMode === "ROLE",
+    accessMode === "ROLE" || accessMode === "PASSWORD",
   );
   const [isUnlockPending, startUnlockTransition] = useTransition();
   const toast = useToast();
@@ -96,23 +101,36 @@ export default function ProtectedPostContentClient({
     () => `protected-post-article-content-${slug}`,
     [slug],
   );
+  const captchaBroadcastKey = useMemo(() => `protected-post:${slug}`, [slug]);
   const contentSelector = `#${articleContentId}`;
   const loginHref = `/login?redirect=${encodeURIComponent(`/posts/${slug}`)}`;
   const navigate = useNavigateWithTransition();
 
   const resetCaptchaState = useCallback(() => {
     setCaptchaToken("");
-    void broadcast({ type: "captcha-reset" });
-  }, [broadcast]);
+    void broadcast({
+      type: "captcha-reset",
+      captchaKey: captchaBroadcastKey,
+    });
+  }, [broadcast, captchaBroadcastKey]);
 
-  useBroadcast((message: { type: string; token?: string }) => {
-    if (message?.type === "captcha-solved" && message.token) {
-      setCaptchaToken(message.token);
-    }
-  });
+  useBroadcast(
+    (message: { type: string; token?: string; captchaKey?: string }) => {
+      if (
+        message?.type === "captcha-solved" &&
+        message.token &&
+        message.captchaKey === captchaBroadcastKey
+      ) {
+        setCaptchaToken(message.token);
+      }
+    },
+  );
 
-  useBroadcast((message: { type: string }) => {
-    if (message?.type === "captcha-error") {
+  useBroadcast((message: { type: string; captchaKey?: string }) => {
+    if (
+      message?.type === "captcha-error" &&
+      message.captchaKey === captchaBroadcastKey
+    ) {
       setCaptchaToken("");
       toast.error("安全验证失败", "请刷新页面后重试");
     }
@@ -166,8 +184,15 @@ export default function ProtectedPostContentClient({
     const bootstrap = async () => {
       const shouldSilentLoad = accessMode === "PASSWORD";
       const loaded = await loadContent({ silent: shouldSilentLoad });
-      if (!cancelled && accessMode === "ROLE" && !loaded) {
-        setIsLoadingContent(false);
+      if (!cancelled) {
+        if (accessMode === "ROLE" && !loaded) {
+          setIsLoadingContent(false);
+          return;
+        }
+
+        if (accessMode === "PASSWORD") {
+          setIsLoadingContent(false);
+        }
       }
     };
 
@@ -269,13 +294,24 @@ export default function ProtectedPostContentClient({
       commentConfig={commentConfig}
     />
   ) : null;
+  const processedContentSource = useMemo(() => {
+    if (!contentData) {
+      return null;
+    }
+
+    return prepareRichTextSource(
+      contentData.content,
+      contentData.postMode === "MDX" ? "mdx" : "markdown",
+      { skipFirstH1: true },
+    );
+  }, [contentData]);
   const articleBodyNode = contentData ? (
     <div key="protected-post-content" className="w-full">
       {contentData.postMode === "MDX" ? (
-        <MDXClientRenderer source={contentData.content} />
+        <MDXClientRenderer source={processedContentSource || ""} />
       ) : (
         <MarkdownClientRenderer
-          source={contentData.content}
+          source={processedContentSource || ""}
           shikiTheme={shikiTheme}
         />
       )}
@@ -356,6 +392,7 @@ export default function ProtectedPostContentClient({
                 variant="secondary"
                 size="md"
                 fullWidth
+                broadcastKey={captchaBroadcastKey}
                 loading={isUnlockPending}
                 verificationText="正在执行安全验证"
               />
@@ -364,6 +401,7 @@ export default function ProtectedPostContentClient({
         )}
       </div>
     );
+  const tocItems = contentData?.tocItems ?? [];
 
   return (
     <div className="px-6 md:px-10 max-w-7xl mx-auto pt-10 flex gap-6 relative h-full">
@@ -400,11 +438,15 @@ export default function ProtectedPostContentClient({
       </div>
 
       <div className="flex-[2] hidden lg:block max-w-screen h-full sticky top-10 self-start">
-        <PostToc contentSelector={contentSelector} />
+        <PostToc tocItems={tocItems} contentSelector={contentSelector} />
       </div>
 
       <div className="lg:hidden">
-        <PostToc isMobile={true} contentSelector={contentSelector} />
+        <PostToc
+          tocItems={tocItems}
+          isMobile={true}
+          contentSelector={contentSelector}
+        />
       </div>
     </div>
   );

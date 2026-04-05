@@ -72,6 +72,7 @@ import {
 import prisma from "@/lib/server/prisma";
 import limitControl from "@/lib/server/rate-limit";
 import ResponseBuilder from "@/lib/server/response";
+import { buildTocFromSource } from "@/lib/server/rich-text-outline";
 import { markdownToPlainText } from "@/lib/server/search";
 import { slugify } from "@/lib/server/slugify";
 import { analyzeText } from "@/lib/server/tokenizer";
@@ -1472,6 +1473,11 @@ export async function getProtectedPostContent(
         content: post.content,
         postMode: post.postMode,
         allowComments: post.allowComments,
+        tocItems: buildTocFromSource({
+          source: post.content,
+          mode: post.postMode === "MARKDOWN" ? "markdown" : "mdx",
+          skipFirstH1: true,
+        }),
       },
     });
   } catch (error) {

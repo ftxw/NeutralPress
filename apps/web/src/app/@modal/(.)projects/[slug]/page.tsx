@@ -45,7 +45,13 @@ async function renderProjectDetailModalPage(slug: string) {
   return (
     <ProjectPaperModal
       title={project.title}
-      toc={<PostToc contentSelector={contentSelector} transparent={true} />}
+      toc={
+        <PostToc
+          tocItems={project.tocItems}
+          contentSelector={contentSelector}
+          transparent={true}
+        />
+      }
     >
       <div>
         <ProjectDetailHeader project={project} variant="modal" />

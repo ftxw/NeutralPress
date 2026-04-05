@@ -29,6 +29,14 @@ export const PostAccessModeSchema = z.enum(["PUBLIC", "ROLE", "PASSWORD"]);
 export type PostAccessMode = z.infer<typeof PostAccessModeSchema>;
 registerSchema("PostAccessMode", PostAccessModeSchema);
 
+export const PostTocItemSchema = z.object({
+  id: z.string(),
+  text: z.string(),
+  level: z.number().int().positive(),
+});
+export type PostTocItem = z.infer<typeof PostTocItemSchema>;
+registerSchema("PostTocItem", PostTocItemSchema);
+
 /*
     getPostsTrends() Schema
 */
@@ -195,6 +203,7 @@ export const ProtectedPostContentSchema = z.object({
   content: z.string(),
   postMode: z.enum(["MARKDOWN", "MDX"]),
   allowComments: z.boolean(),
+  tocItems: z.array(PostTocItemSchema),
 });
 export type ProtectedPostContent = z.infer<typeof ProtectedPostContentSchema>;
 registerSchema("ProtectedPostContent", ProtectedPostContentSchema);

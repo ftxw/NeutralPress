@@ -41,6 +41,7 @@ import {
 } from "@/lib/server/post";
 import { PUBLIC_POST_ACCESS_MODE } from "@/lib/server/post-access";
 import prisma from "@/lib/server/prisma";
+import { buildTocFromSource } from "@/lib/server/rich-text-outline";
 import {
   generateJsonLdGraph,
   generateMetadata as generateSEOMetadata,
@@ -876,6 +877,11 @@ async function renderPostPage(slug: string) {
   const featuredHeroHeightClassName = "h-[42.1em]";
   const articleContentId = "post-detail-article-content";
   const contentSelector = `#${articleContentId}`;
+  const tocItems = buildTocFromSource({
+    source: post.content,
+    mode: post.postMode === "MARKDOWN" ? "markdown" : "mdx",
+    skipFirstH1: true,
+  });
 
   return (
     <MainLayout type="vertical" nopadding>
@@ -1069,12 +1075,16 @@ async function renderPostPage(slug: string) {
           {/* 侧边栏容器 */}
           <div className="flex-[2] hidden lg:block max-w-screen h-full sticky top-10 self-start">
             {/* 目录（包含视口内容卡片） */}
-            <PostToc contentSelector={contentSelector} />
+            <PostToc tocItems={tocItems} contentSelector={contentSelector} />
           </div>
 
           {/* 移动端目录按钮 */}
           <div className="lg:hidden">
-            <PostToc isMobile={true} contentSelector={contentSelector} />
+            <PostToc
+              tocItems={tocItems}
+              isMobile={true}
+              contentSelector={contentSelector}
+            />
           </div>
         </div>
       </div>
