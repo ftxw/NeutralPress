@@ -1,3 +1,4 @@
+import { LISTABLE_POST_PUBLISHED_WHERE } from "@/lib/server/post-access";
 import prisma from "@/lib/server/prisma";
 
 /**
@@ -19,17 +20,11 @@ export async function postsListInterpolator(
   const [totalPosts, firstPost, _lastPost] = await Promise.all([
     // 统计已发布文章数
     prisma.post.count({
-      where: {
-        status: "PUBLISHED",
-        deletedAt: null,
-      },
+      where: LISTABLE_POST_PUBLISHED_WHERE,
     }),
     // 获取第一篇发布的文章
     prisma.post.findFirst({
-      where: {
-        status: "PUBLISHED",
-        deletedAt: null,
-      },
+      where: LISTABLE_POST_PUBLISHED_WHERE,
       orderBy: {
         publishedAt: "asc",
       },
@@ -39,10 +34,7 @@ export async function postsListInterpolator(
     }),
     // 获取最后一篇更新的文章（已被 lastPublishDays 全局插值器替代）
     prisma.post.findFirst({
-      where: {
-        status: "PUBLISHED",
-        deletedAt: null,
-      },
+      where: LISTABLE_POST_PUBLISHED_WHERE,
       orderBy: {
         updatedAt: "desc",
       },
@@ -54,10 +46,7 @@ export async function postsListInterpolator(
 
   // 获取所有文章的 slug（用于随机链接）
   const allPosts = await prisma.post.findMany({
-    where: {
-      status: "PUBLISHED",
-      deletedAt: null,
-    },
+    where: LISTABLE_POST_PUBLISHED_WHERE,
     select: {
       slug: true,
     },

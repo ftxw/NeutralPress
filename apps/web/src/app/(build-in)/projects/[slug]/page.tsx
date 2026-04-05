@@ -97,8 +97,8 @@ async function renderProjectDetailPage(slug: string) {
   cacheTag(...Array.from(pageCacheTags));
   cacheLife("max");
 
-  const contentRootId = "project-detail-content";
-  const contentSelector = `#${contentRootId} .md-content`;
+  const contentRootId = "project-detail-article-content";
+  const contentSelector = `#${contentRootId}`;
   const featuredHeroHeightClassName = "h-[42.1em]";
   const description =
     project.metaDescription ||
@@ -165,10 +165,7 @@ async function renderProjectDetailPage(slug: string) {
           heroHeightClassName={featuredHeroHeightClassName}
         />
 
-        <div
-          id={contentRootId}
-          className="px-6 md:px-10 max-w-7xl mx-auto pt-10 pb-12 flex gap-6 relative h-full"
-        >
+        <div className="px-6 md:px-10 max-w-7xl mx-auto pt-10 pb-12 flex gap-6 relative h-full">
           <div className="min-w-0 flex-[8]">
             <ProjectDetailBody
               project={project}
@@ -176,6 +173,7 @@ async function renderProjectDetailPage(slug: string) {
               shikiTheme={shikiTheme}
               siteURL={siteURL}
               variant="page"
+              contentRootId={contentRootId}
             />
           </div>
 

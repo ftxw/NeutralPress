@@ -18,6 +18,7 @@ export interface PostData {
   title: string;
   titleHighlight?: string;
   slug: string;
+  accessMode?: "PUBLIC" | "ROLE" | "PASSWORD";
   excerpt: string | null;
   excerptHighlight?: string | null;
   isPinned: boolean;
@@ -124,6 +125,7 @@ export default function SearchContent({
             title: item.title,
             titleHighlight: item.titleHighlight,
             slug: item.slug,
+            accessMode: "PUBLIC",
             excerpt: item.excerpt,
             excerptHighlight: item.excerptHighlight,
             isPinned: item.isPinned,
@@ -357,6 +359,7 @@ export default function SearchContent({
                                 )
                               }
                               slug={post.slug}
+                              accessMode={post.accessMode}
                               isPinned={post.isPinned}
                               date={post.publishedAt}
                               category={post.categories}

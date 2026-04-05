@@ -7,6 +7,7 @@ import { unified } from "unified";
 import { batchGetCategoryPaths } from "@/lib/server/category-utils";
 import { type ConfigItem, getRawConfig } from "@/lib/server/config-cache";
 import { getFeaturedImageUrl } from "@/lib/server/media-reference";
+import { LISTABLE_POST_PUBLISHED_WHERE } from "@/lib/server/post-access";
 import prisma from "@/lib/server/prisma";
 import {
   markdownRehypePlugins,
@@ -230,8 +231,7 @@ export async function getFeedData(): Promise<FeedData> {
 
   const posts = await prisma.post.findMany({
     where: {
-      status: "PUBLISHED",
-      deletedAt: null,
+      ...LISTABLE_POST_PUBLISHED_WHERE,
       publishedAt: { not: null },
     },
     orderBy: {
@@ -245,6 +245,7 @@ export async function getFeedData(): Promise<FeedData> {
       content: true,
       publishedAt: true,
       updatedAt: true,
+      accessMode: true,
       author: {
         select: {
           nickname: true,
@@ -332,11 +333,28 @@ export async function getFeedData(): Promise<FeedData> {
 
   const formattedPosts: FeedPost[] = await Promise.all(
     posts.map(async (post) => {
-      const featuredImage = getFeaturedImageUrl(post.mediaRefs);
+      const postUrl = `${siteConfig.url}/posts/${post.slug}`;
+      const isProtectedPost = post.accessMode !== "PUBLIC";
+      const featuredImage = isProtectedPost
+        ? null
+        : getFeaturedImageUrl(post.mediaRefs);
+
+      if (isProtectedPost) {
+        return {
+          title: post.title,
+          slug: post.slug,
+          excerpt: null,
+          content: buildFeedLeadHtml(postUrl),
+          publishedAt: post.publishedAt,
+          updatedAt: post.updatedAt,
+          author: post.author,
+          categories: post.categories,
+          featuredImage,
+        };
+      }
 
       // text-version v2: content 字段已经是最新内容
       const latestContent = post.content;
-      const postUrl = `${siteConfig.url}/posts/${post.slug}`;
 
       let content = latestContent;
       const excerpt = post.excerpt;

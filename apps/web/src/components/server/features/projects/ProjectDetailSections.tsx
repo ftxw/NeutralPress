@@ -285,6 +285,7 @@ interface ProjectDetailBodyProps {
   shikiTheme?: ShikiTheme;
   siteURL?: string;
   variant?: ProjectDetailVariant;
+  contentRootId?: string;
 }
 
 export function ProjectDetailBody({
@@ -293,6 +294,7 @@ export function ProjectDetailBody({
   shikiTheme,
   siteURL,
   variant = "page",
+  contentRootId,
 }: ProjectDetailBodyProps) {
   const footerClassName =
     variant === "page"
@@ -304,7 +306,7 @@ export function ProjectDetailBody({
     : `/projects/${project.slug}`;
 
   return (
-    <article className="min-w-0">
+    <article id={contentRootId} className="min-w-0">
       {project.content ? (
         <UniversalRenderer
           source={project.content}

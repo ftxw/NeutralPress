@@ -12,6 +12,7 @@ import type {
   GetPostsList,
   GetPostsTrends,
   GetPostVersion,
+  GetProtectedPostContent,
   PostDetail,
   PostHistoryItem,
   PostHistoryStats,
@@ -19,10 +20,12 @@ import type {
   PostListItem,
   PostTrendItem,
   PostVersionDetail,
+  ProtectedPostContent,
   ResetPostToVersion,
   ResetPostToVersionResult,
   SquashPostToVersion,
   SquashPostToVersionResult,
+  UnlockProtectedPost,
   UpdatePost,
   UpdatePostResult,
   UpdatePosts,
@@ -35,8 +38,10 @@ import {
   GetPostsListSchema,
   GetPostsTrendsSchema,
   GetPostVersionSchema,
+  GetProtectedPostContentSchema,
   ResetPostToVersionSchema,
   SquashPostToVersionSchema,
+  UnlockProtectedPostSchema,
   UpdatePostSchema,
   UpdatePostsSchema,
 } from "@repo/shared-types/api/post";
@@ -47,12 +52,23 @@ import { TextVersion } from "text-version";
 
 import { logAuditEvent } from "@/lib/server/audit";
 import { authVerify } from "@/lib/server/auth-verify";
+import { verifyToken } from "@/lib/server/captcha";
 import { getConfig } from "@/lib/server/config-cache";
 import { generateSignature } from "@/lib/server/image-crypto";
 import {
   findMediaIdByUrl,
   getFeaturedImageUrl,
 } from "@/lib/server/media-reference";
+import {
+  clearPostAccessCookie,
+  evaluatePostAccess,
+  hasPostAccessChanged,
+  LISTABLE_POST_PUBLISHED_WHERE,
+  normalizePostAccessInput,
+  PUBLIC_POST_STATUSES,
+  setPostAccessCookie,
+  validatePostAccessInput,
+} from "@/lib/server/post-access";
 import prisma from "@/lib/server/prisma";
 import limitControl from "@/lib/server/rate-limit";
 import ResponseBuilder from "@/lib/server/response";
@@ -581,8 +597,7 @@ async function addAdjacentPublishedPostSlugs(
   const [previousPost, nextPost] = await Promise.all([
     prisma.post.findFirst({
       where: {
-        status: "PUBLISHED",
-        deletedAt: null,
+        ...LISTABLE_POST_PUBLISHED_WHERE,
         publishedAt: { lt: post.publishedAt },
       },
       orderBy: { publishedAt: "desc" },
@@ -590,8 +605,7 @@ async function addAdjacentPublishedPostSlugs(
     }),
     prisma.post.findFirst({
       where: {
-        status: "PUBLISHED",
-        deletedAt: null,
+        ...LISTABLE_POST_PUBLISHED_WHERE,
         publishedAt: { gt: post.publishedAt },
       },
       orderBy: { publishedAt: "asc" },
@@ -1020,6 +1034,9 @@ export async function getPostsList(
         status: true,
         isPinned: true,
         allowComments: true,
+        accessMode: true,
+        minRole: true,
+        accessPasswords: true,
         publishedAt: true,
         createdAt: true,
         updatedAt: true,
@@ -1086,6 +1103,9 @@ export async function getPostsList(
       metaKeywords: post.metaKeywords,
       robotsIndex: post.robotsIndex,
       postMode: post.postMode,
+      accessMode: post.accessMode,
+      minRole: post.minRole,
+      accessPasswords: post.accessPasswords,
       author: {
         uid: post.author.uid,
         username: post.author.username,
@@ -1200,6 +1220,9 @@ export async function getPostDetail(
         robotsIndex: true,
         postMode: true,
         license: true,
+        accessMode: true,
+        minRole: true,
+        accessPasswords: true,
         userUid: true, // 需要获取作者 uid 以进行权限检查
         author: {
           select: {
@@ -1265,6 +1288,9 @@ export async function getPostDetail(
       metaKeywords: post.metaKeywords,
       robotsIndex: post.robotsIndex,
       postMode: post.postMode,
+      accessMode: post.accessMode,
+      minRole: post.minRole,
+      accessPasswords: post.accessPasswords,
       author: {
         uid: post.author.uid,
         username: post.author.username,
@@ -1279,6 +1305,177 @@ export async function getPostDetail(
     return response.ok({ data });
   } catch (error) {
     console.error("Get post detail error:", error);
+    return response.serverError();
+  }
+}
+
+/*
+  unlockProtectedPost - 验证口令并写入文章解锁 cookie
+*/
+export async function unlockProtectedPost(
+  params: UnlockProtectedPost,
+  serverConfig: { environment: "serverless" },
+): Promise<NextResponse<ApiResponse<null>>>;
+export async function unlockProtectedPost(
+  params: UnlockProtectedPost,
+  serverConfig?: ActionConfig,
+): Promise<ApiResponse<null>>;
+export async function unlockProtectedPost(
+  { slug, passphrase, captcha_token }: UnlockProtectedPost,
+  serverConfig?: ActionConfig,
+): Promise<ActionResult<null>> {
+  const response = new ResponseBuilder(
+    serverConfig?.environment || "serveraction",
+  );
+
+  if (!(await limitControl(await headers(), "unlockProtectedPost"))) {
+    return response.tooManyRequests();
+  }
+
+  const validationError = validateData(
+    {
+      slug,
+      passphrase,
+      captcha_token,
+    },
+    UnlockProtectedPostSchema,
+  );
+  if (validationError) return response.badRequest(validationError);
+
+  const captchaResult = await verifyToken(captcha_token);
+  if (!captchaResult?.success) {
+    return response.badRequest({ message: "安全验证失败，请重试" });
+  }
+
+  try {
+    const post = await prisma.post.findFirst({
+      where: {
+        slug,
+        status: {
+          in: [...PUBLIC_POST_STATUSES],
+        },
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        accessMode: true,
+        accessPasswords: true,
+        accessVersion: true,
+      },
+    });
+
+    if (!post) {
+      return response.notFound({ message: "文章不存在" });
+    }
+
+    if (post.accessMode !== "PASSWORD") {
+      return response.badRequest({ message: "该文章不支持口令解锁" });
+    }
+
+    const normalizedPassphrase = passphrase.trim();
+    if (!post.accessPasswords.includes(normalizedPassphrase)) {
+      return response.forbidden({ message: "口令错误" });
+    }
+
+    await setPostAccessCookie(post.id, post.accessVersion);
+
+    return response.ok({
+      data: null,
+      message: "文章已解锁",
+    });
+  } catch (error) {
+    console.error("Unlock protected post error:", error);
+    return response.serverError();
+  }
+}
+
+/*
+  getProtectedPostContent - 获取受保护文章正文
+*/
+export async function getProtectedPostContent(
+  params: GetProtectedPostContent,
+  serverConfig: { environment: "serverless" },
+): Promise<NextResponse<ApiResponse<ProtectedPostContent | null>>>;
+export async function getProtectedPostContent(
+  params: GetProtectedPostContent,
+  serverConfig?: ActionConfig,
+): Promise<ApiResponse<ProtectedPostContent | null>>;
+export async function getProtectedPostContent(
+  { slug }: GetProtectedPostContent,
+  serverConfig?: ActionConfig,
+): Promise<ActionResult<ProtectedPostContent | null>> {
+  const response = new ResponseBuilder(
+    serverConfig?.environment || "serveraction",
+  );
+
+  if (!(await limitControl(await headers(), "getProtectedPostContent"))) {
+    return response.tooManyRequests();
+  }
+
+  const validationError = validateData(
+    {
+      slug,
+    },
+    GetProtectedPostContentSchema,
+  );
+  if (validationError) return response.badRequest(validationError);
+
+  try {
+    const post = await prisma.post.findFirst({
+      where: {
+        slug,
+        status: {
+          in: [...PUBLIC_POST_STATUSES],
+        },
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        content: true,
+        postMode: true,
+        allowComments: true,
+        accessMode: true,
+        minRole: true,
+        accessPasswords: true,
+        accessVersion: true,
+      },
+    });
+
+    if (!post) {
+      return response.notFound({ message: "文章不存在" });
+    }
+
+    const authUser = await authVerify({
+      allowedRoles: ["USER", "ADMIN", "EDITOR", "AUTHOR"],
+    });
+    const accessResult = await evaluatePostAccess({
+      post,
+      userRole: authUser?.role,
+    });
+
+    if (!accessResult.allowed) {
+      if (accessResult.reason === "LOGIN_REQUIRED") {
+        return response.unauthorized({ message: "请登录后查看此文章" });
+      }
+
+      if (accessResult.reason === "ROLE_REQUIRED") {
+        return response.forbidden({
+          message: "当前账号权限不足，无法查看此文章",
+        });
+      }
+
+      return response.forbidden({ message: "请先输入正确口令解锁文章" });
+    }
+
+    return response.ok({
+      data: {
+        content: post.content,
+        postMode: post.postMode,
+        allowComments: post.allowComments,
+      },
+    });
+  } catch (error) {
+    console.error("Get protected post content error:", error);
     return response.serverError();
   }
 }
@@ -1306,6 +1503,9 @@ export async function createPost(
     status = "DRAFT",
     isPinned = false,
     allowComments = true,
+    accessMode = "PUBLIC",
+    minRole,
+    accessPasswords,
     publishedAt,
     metaDescription,
     metaKeywords,
@@ -1337,6 +1537,9 @@ export async function createPost(
       status,
       isPinned,
       allowComments,
+      accessMode,
+      minRole,
+      accessPasswords,
       publishedAt,
       metaDescription,
       metaKeywords,
@@ -1350,6 +1553,16 @@ export async function createPost(
   );
 
   if (validationError) return response.badRequest(validationError);
+
+  const normalizedAccess = normalizePostAccessInput({
+    accessMode,
+    minRole,
+    accessPasswords,
+  });
+  const accessValidationError = validatePostAccessInput(normalizedAccess);
+  if (accessValidationError) {
+    return response.badRequest({ message: accessValidationError });
+  }
 
   // 身份验证
   const user = await authVerify({
@@ -1457,6 +1670,9 @@ export async function createPost(
         status,
         isPinned,
         allowComments,
+        accessMode: normalizedAccess.accessMode,
+        minRole: normalizedAccess.minRole,
+        accessPasswords: normalizedAccess.accessPasswords,
         publishedAt: publishedAtDate,
         metaDescription: metaDescription || null,
         metaKeywords: metaKeywords || null,
@@ -1526,6 +1742,10 @@ export async function createPost(
               status,
               isPinned,
               allowComments,
+              accessMode: normalizedAccess.accessMode,
+              minRole: normalizedAccess.minRole,
+              accessPasswords: normalizedAccess.accessPasswords,
+              accessVersion: 1,
               publishedAt: publishedAtDate?.toISOString() || null,
               metaDescription,
               metaKeywords,
@@ -1617,6 +1837,9 @@ export async function updatePost(
     status,
     isPinned,
     allowComments,
+    accessMode,
+    minRole,
+    accessPasswords,
     publishedAt,
     metaDescription,
     metaKeywords,
@@ -1649,6 +1872,9 @@ export async function updatePost(
       status,
       isPinned,
       allowComments,
+      accessMode,
+      minRole,
+      accessPasswords,
       publishedAt,
       metaDescription,
       metaKeywords,
@@ -1687,6 +1913,10 @@ export async function updatePost(
         status: true,
         isPinned: true,
         allowComments: true,
+        accessMode: true,
+        minRole: true,
+        accessPasswords: true,
+        accessVersion: true,
         publishedAt: true,
         metaDescription: true,
         metaKeywords: true,
@@ -1726,6 +1956,22 @@ export async function updatePost(
     if (user.role === "AUTHOR" && existingPost.userUid !== user.uid) {
       return response.forbidden({ message: "无权修改此文章" });
     }
+
+    const nextAccessInput = {
+      accessMode:
+        accessMode === undefined ? existingPost.accessMode : accessMode,
+      minRole: minRole === undefined ? existingPost.minRole : minRole,
+      accessPasswords:
+        accessPasswords === undefined
+          ? existingPost.accessPasswords
+          : accessPasswords,
+    };
+    const accessValidationError = validatePostAccessInput(nextAccessInput);
+    if (accessValidationError) {
+      return response.badRequest({ message: accessValidationError });
+    }
+    const normalizedAccess = normalizePostAccessInput(nextAccessInput);
+    const accessChanged = hasPostAccessChanged(existingPost, normalizedAccess);
 
     // 如果要修改 slug，检查新 slug 是否已被占用
     if (newSlug && newSlug !== slug) {
@@ -1856,10 +2102,15 @@ export async function updatePost(
       title?: string;
       slug?: string;
       content?: string;
+      versionMetadata?: string;
       excerpt?: string | null;
       status?: "DRAFT" | "PUBLISHED" | "ARCHIVED";
       isPinned?: boolean;
       allowComments?: boolean;
+      accessMode?: "PUBLIC" | "ROLE" | "PASSWORD";
+      minRole?: "USER" | "ADMIN" | "EDITOR" | "AUTHOR" | null;
+      accessPasswords?: string[];
+      accessVersion?: number;
       publishedAt?: Date | null;
       metaDescription?: string | null;
       metaKeywords?: string | null;
@@ -1872,12 +2123,18 @@ export async function updatePost(
     if (newSlug !== undefined) updateData.slug = newSlug;
     if (hasContentChanged) {
       updateData.content = newSnapshot;
-      (updateData as Record<string, unknown>).versionMetadata = newMetadata;
+      updateData.versionMetadata = newMetadata;
     }
     if (excerpt !== undefined) updateData.excerpt = excerpt || null;
     if (status !== undefined) updateData.status = status;
     if (isPinned !== undefined) updateData.isPinned = isPinned;
     if (allowComments !== undefined) updateData.allowComments = allowComments;
+    if (accessChanged) {
+      updateData.accessMode = normalizedAccess.accessMode;
+      updateData.minRole = normalizedAccess.minRole;
+      updateData.accessPasswords = normalizedAccess.accessPasswords;
+      updateData.accessVersion = existingPost.accessVersion + 1;
+    }
     if (postMode !== undefined) updateData.postMode = postMode;
 
     // 处理发布时间的逻辑
@@ -2008,6 +2265,10 @@ export async function updatePost(
           title: true,
           slug: true,
           status: true,
+          accessMode: true,
+          minRole: true,
+          accessPasswords: true,
+          accessVersion: true,
           publishedAt: true,
           categories: {
             select: {
@@ -2024,6 +2285,10 @@ export async function updatePost(
 
       return updated;
     });
+
+    if (accessChanged) {
+      await clearPostAccessCookie(existingPost.id);
+    }
 
     // 记录审计日志
     // 构建审计日志的 old 和 new 值，只记录被修改的字段（排除 content）
@@ -2069,6 +2334,16 @@ export async function updatePost(
     ) {
       auditOldValue.allowComments = existingPost.allowComments;
       auditNewValue.allowComments = allowComments;
+    }
+    if (accessChanged) {
+      auditOldValue.accessMode = existingPost.accessMode;
+      auditNewValue.accessMode = normalizedAccess.accessMode;
+      auditOldValue.minRole = existingPost.minRole;
+      auditNewValue.minRole = normalizedAccess.minRole;
+      auditOldValue.accessPasswords = existingPost.accessPasswords;
+      auditNewValue.accessPasswords = normalizedAccess.accessPasswords;
+      auditOldValue.accessVersion = existingPost.accessVersion;
+      auditNewValue.accessVersion = updatedPost.accessVersion;
     }
     if (updateData.publishedAt !== undefined) {
       const oldPublishedAt = existingPost.publishedAt?.toISOString() || null;
@@ -2207,8 +2482,13 @@ export async function updatePost(
     updateTagCacheTagsBySlugs(tagDetailTagsToRefresh);
     updateCategoryCacheTagsByPaths(categoryDetailTagsToRefresh);
 
-    const wasPublished = existingPost.status === "PUBLISHED";
-    const isPublished = updatedPost.status === "PUBLISHED";
+    const wasPublicVisible =
+      existingPost.accessMode === "PUBLIC" &&
+      (existingPost.status === "PUBLISHED" ||
+        existingPost.status === "ARCHIVED");
+    const isPublicVisible =
+      updatedPost.accessMode === "PUBLIC" &&
+      (updatedPost.status === "PUBLISHED" || updatedPost.status === "ARCHIVED");
     const categoryOrTagChanged = categories !== undefined || tags !== undefined;
     const listFieldChanged =
       title !== undefined ||
@@ -2218,17 +2498,19 @@ export async function updatePost(
       hasContentChanged ||
       status !== undefined ||
       publishedAt !== undefined ||
+      accessChanged ||
       categoryOrTagChanged;
 
-    if (listFieldChanged && (wasPublished || isPublished)) {
+    if (listFieldChanged && (wasPublicVisible || isPublicVisible)) {
       updateTag("posts/list");
     }
 
     if (
       (categoryOrTagChanged ||
         status !== undefined ||
-        publishedAt !== undefined) &&
-      (wasPublished || isPublished)
+        publishedAt !== undefined ||
+        accessChanged) &&
+      (wasPublicVisible || isPublicVisible)
     ) {
       updateTag("tags/list");
       updateTag("categories/list");
