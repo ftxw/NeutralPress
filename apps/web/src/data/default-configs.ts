@@ -221,7 +221,7 @@ export const CONFIG_DEFINITIONS = {
       "是否需要用户注册后验证邮箱。需要设置相关环境变量以配置电子邮件发送服务，详见文档",
   },
   "user.sso.google.enabled": {
-    default: false,
+    default: false as boolean,
     description:
       "是否启用 Google SSO 登录，详见 https://neutralpress.net/docs/settings/sso",
   },
@@ -233,7 +233,7 @@ export const CONFIG_DEFINITIONS = {
     description: "Google OAuth 配置参数",
   },
   "user.sso.github.enabled": {
-    default: false,
+    default: false as boolean,
     description:
       "是否启用 GitHub SSO 登录，详见 https://neutralpress.net/docs/settings/sso",
   },
@@ -245,7 +245,7 @@ export const CONFIG_DEFINITIONS = {
     description: "GitHub OAuth 配置参数",
   },
   "user.sso.microsoft.enabled": {
-    default: false,
+    default: false as boolean,
     description:
       "是否启用 Microsoft SSO 登录，详见 https://neutralpress.net/docs/settings/sso",
   },

@@ -24,6 +24,7 @@ import Footer from "@/components/server/layout/Footer";
 // Server Components
 import Header from "@/components/server/layout/Header";
 import { ConfigProvider } from "@/context/ConfigContext";
+import type { ConfigTypeMap } from "@/data/default-configs";
 import { getConfig, getConfigs } from "@/lib/server/config-cache";
 // lib
 import { getActiveMenusForClient } from "@/lib/server/menu-cache";
@@ -84,6 +85,9 @@ export default async function RootLayout({
     "config/notice.ably.key",
     "config/site.shiki.theme",
     "config/media.customLoader",
+    "config/user.sso.google.enabled",
+    "config/user.sso.github.enabled",
+    "config/user.sso.microsoft.enabled",
   );
   cacheLife("max");
 
@@ -104,6 +108,9 @@ export default async function RootLayout({
       ablyApiKey,
       shikiTheme,
       mediaCustomLoader,
+      googleSSOEnabled,
+      githubSSOEnabled,
+      microsoftSSOEnabled,
     ],
   ] = await Promise.all([
     getActiveMenusForClient(),
@@ -121,6 +128,9 @@ export default async function RootLayout({
       "notice.ably.key",
       "site.shiki.theme",
       "media.customLoader",
+      "user.sso.google.enabled",
+      "user.sso.github.enabled",
+      "user.sso.microsoft.enabled",
     ]),
   ]);
 
@@ -143,7 +153,10 @@ export default async function RootLayout({
     "site.shiki.theme": shikiTheme,
     "analytics.enable": enableAnalytics,
     "media.customLoader": mediaCustomLoader,
-  };
+    "user.sso.google.enabled": googleSSOEnabled,
+    "user.sso.github.enabled": githubSSOEnabled,
+    "user.sso.microsoft.enabled": microsoftSSOEnabled,
+  } as Partial<ConfigTypeMap>;
 
   return (
     <html
